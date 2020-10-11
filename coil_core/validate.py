@@ -17,6 +17,7 @@ from logger import coil_logger
 from coilutils.checkpoint_schedule import get_latest_evaluated_checkpoint, is_next_checkpoint_ready,\
     maximun_checkpoint_reach, get_next_checkpoint
 
+import numpy as np
 
 def write_waypoints_output(iteration, output):
 
@@ -118,51 +119,76 @@ def execute(gpu, exp_batch, exp_alias, dataset_name, suppress_output):
                 accumulated_mse = 0
                 accumulated_error = 0
                 iteration_on_checkpoint = 0
+
+                all_info = dict()
+
                 for data in data_loader:
 
                     # Compute the forward pass on a batch from  the validation dataset
                     controls = data['directions']
-                    output = model.forward_branch(torch.squeeze(data['rgb']).cuda(),
+                    means, log_vars = model.forward_branch(torch.squeeze(data['rgb']).cuda(),
                                                   dataset.extract_inputs(data).cuda(),
                                                   controls)
                     # It could be either waypoints or direct control
                     if 'waypoint1_angle' in g_conf.TARGETS:
-                        write_waypoints_output(checkpoint_iteration, output)
+                        write_waypoints_output(checkpoint_iteration, means)
                     else:
-                        write_regular_output(checkpoint_iteration, output)
+                        write_regular_output(checkpoint_iteration, means)
 
-                    mse = torch.mean((output -
-                                      dataset.extract_targets(data).cuda())**2).data.tolist()
+                    mse = torch.mean((means -
+                                      dataset.extract_targets(data).cuda()) ** 2).data.tolist()
                     mean_error = torch.mean(
-                                    torch.abs(output -
-                                              dataset.extract_targets(data).cuda())).data.tolist()
+                        torch.abs(means -
+                                  dataset.extract_targets(data).cuda())).data.tolist()
 
                     accumulated_error += mean_error
                     accumulated_mse += mse
-                    error = torch.abs(output - dataset.extract_targets(data).cuda())
+                    error = torch.abs(means - dataset.extract_targets(data).cuda())
+
+                    all_info_means = means.detach().cpu().numpy()
+                    all_info_log_vars = log_vars.detach().cpu().numpy()
+                    all_info_speeds = dataset.extract_inputs(data).detach().cpu().numpy()
+                    all_info_targets = dataset.extract_targets(data).detach().cpu().numpy()
+                    all_info_controls = controls.detach().cpu().numpy()
+
+                    if iteration_on_checkpoint == 0:
+                        all_info['means'] = all_info_means
+                        all_info['log_vars'] = all_info_log_vars
+                        all_info['speeds'] = all_info_speeds
+                        all_info['targets'] = all_info_targets
+                        all_info['controls'] = all_info_controls
+                    else:
+                        all_info['means'] = np.concatenate([all_info['means'], all_info_means], axis=0)
+                        all_info['log_vars'] = np.concatenate([all_info['log_vars'], all_info_log_vars], axis=0)
+                        all_info['speeds'] = np.concatenate([all_info['speeds'], all_info_speeds], axis=0)
+                        all_info['targets'] = np.concatenate([all_info['targets'], all_info_targets], axis=0)
+                        all_info['controls'] = np.concatenate([all_info['controls'], all_info_controls], axis=0)
 
                     # Log a random position
-                    position = random.randint(0, len(output.data.tolist())-1)
+                    position = random.randint(0, len(means.data.tolist()) - 1)
 
                     coil_logger.add_message('Iterating',
-                         {'Checkpoint': latest,
-                          'Iteration': (str(iteration_on_checkpoint*120)+'/'+str(len(dataset))),
-                          'MeanError': mean_error,
-                          'MSE': mse,
-                          'Output': output[position].data.tolist(),
-                          'GroundTruth': dataset.extract_targets(data)[position].data.tolist(),
-                          'Error': error[position].data.tolist(),
-                          'Inputs': dataset.extract_inputs(data)[position].data.tolist()},
-                          latest)
+                                            {'Checkpoint': latest,
+                                             'Iteration': (
+                                                         str(iteration_on_checkpoint * 120) + '/' + str(len(dataset))),
+                                             'MeanError': mean_error,
+                                             'MSE': mse,
+                                             'Output': means[position].data.tolist(),
+                                             'GroundTruth': dataset.extract_targets(data)[position].data.tolist(),
+                                             'Error': error[position].data.tolist(),
+                                             'Inputs': dataset.extract_inputs(data)[position].data.tolist()},
+                                            latest)
                     iteration_on_checkpoint += 1
                     print("Iteration %d  on Checkpoint %d : Error %f" % (iteration_on_checkpoint,
-                                                                checkpoint_iteration, mean_error))
+                                                                         checkpoint_iteration, mean_error))
 
                 """
                     ########
                     Finish a round of validation, write results, wait for the next
                     ########
                 """
+                print("writing all info to file..")
+                np.save('all_info_chpt' + str(latest), all_info)
 
                 checkpoint_average_mse = accumulated_mse/(len(data_loader))
                 checkpoint_average_error = accumulated_error/(len(data_loader))

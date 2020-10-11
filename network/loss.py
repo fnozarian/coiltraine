@@ -1,6 +1,8 @@
 from . import loss_functional as LF
 import torch
 
+def l1_gaussian(params):
+    return branched_loss(LF.l1_gaussian_loss, params)
 
 def l1(params):
     return branched_loss(LF.l1_loss, params)
@@ -32,9 +34,10 @@ def branched_loss(loss_function, params):
     Returns
         The computed loss function, but also a dictionary with plotable variables for tensorboard
     """
+    num_targets = params['branches'][0][0].shape[1]
+    batch_size = params['branches'][0][0].shape[0]
 
-    controls_mask = LF.compute_branches_masks(params['controls'],
-                                              params['branches'][0].shape[1])
+    controls_mask = LF.compute_branches_masks(params['controls'], num_targets)
     # Update the dictionary to add also the controls mask.
     params.update({'controls_mask': controls_mask})
 
@@ -53,11 +56,9 @@ def branched_loss(loss_function, params):
     loss_function = loss_branches_vec[0] + loss_branches_vec[1] + loss_branches_vec[2] + \
                     loss_branches_vec[3]
 
-    speed_loss = loss_branches_vec[4]/(params['branches'][0].shape[0])
+    speed_loss = loss_branches_vec[4]/batch_size
 
-    return torch.sum(loss_function) / (params['branches'][0].shape[0])\
-                + torch.sum(speed_loss) / (params['branches'][0].shape[0]),\
-           plotable_params
+    return (torch.sum(loss_function) / batch_size) + torch.sum(speed_loss), plotable_params
 
 
 def Loss(loss_name):
@@ -70,7 +71,7 @@ def Loss(loss_name):
 
     if loss_name == 'L1':
 
-        return l1
+        return l1_gaussian
 
     elif loss_name == 'L2':
 

@@ -149,3 +149,19 @@ def l1_loss(params):
                              * params['branch_weights'][-1])
     return loss_branches_vec, {}
 
+def l1_gaussian_loss(params):
+
+    loss_branches_vec = []
+    for i in range(len(params['branches']) - 1):
+
+        means, log_var = params['branches'][i]
+        targets = params['targets']
+        gaussian_loss = torch.exp(-log_var) * torch.abs(means - targets) + log_var
+        branch_loss = gaussian_loss * params['controls_mask'][i] * params['branch_weights'][i]
+        loss_branches_vec.append(branch_loss)
+
+    """ The last branch is a speed branch"""
+    loss_branches_vec.append(torch.abs(params['branches'][-1] - params['inputs'])
+                             * params['branch_weights'][-1])
+
+    return loss_branches_vec, {}

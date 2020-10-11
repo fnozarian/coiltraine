@@ -47,12 +47,24 @@ def start_carla_simulator(gpu, town_name, docker):
 
     port = find_free_port()
 
+    # sp = subprocess.Popen(['docker', 'run', '--rm', '-d', '-p',
+    #                        str(port)+'-'+str(port+2)+':'+str(port)+'-'+str(port+2),
+    #                        '--runtime=nvidia', '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
+    #                        '/bin/bash', 'CarlaUE4.sh', '/Game/Maps/' + town_name, '-windowed',
+    #                        '-benchmark', '-fps=10', '-world-port=' + str(port)], shell=False,
+    #                        stdout=subprocess.PIPE)
+
     sp = subprocess.Popen(['docker', 'run', '--rm', '-d', '-p',
                            str(port)+'-'+str(port+2)+':'+str(port)+'-'+str(port+2),
-                           '--runtime=nvidia', '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
+                           '--gpus', gpu, '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
                            '/bin/bash', 'CarlaUE4.sh', '/Game/Maps/' + town_name, '-windowed',
                            '-benchmark', '-fps=10', '-world-port=' + str(port)], shell=False,
                            stdout=subprocess.PIPE)
+    print('docker', 'run', '--rm', '--gpus', gpu, '-d', '-p',
+                           str(port)+'-'+str(port+2)+':'+str(port)+'-'+str(port+2),
+                           '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
+                           '/bin/bash', 'CarlaUE4.sh', '/Game/Maps/' + town_name, '-windowed',
+                           '-benchmark', '-fps=10', '-world-port=' + str(port))
     (out, err) = sp.communicate()
 
     print("Going to communicate")
@@ -193,6 +205,9 @@ def execute(gpu, exp_batch, exp_alias, drive_conditions, params):
             sys.stderr = open(os.path.join('_output_logs',
                               exp_alias + '_err_'+g_conf.PROCESS_NAME + '_' + str(os.getpid()) + ".out"),
                               "a", buffering=1)
+
+        print('Final Configurations:')
+        print(g_conf.items())
 
         coil_logger.add_message('Loading', {'Poses': experiment_set.build_experiments()[0].poses})
         if g_conf.USE_ORACLE:

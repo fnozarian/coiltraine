@@ -187,8 +187,15 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
             # Log a random position
             position = random.randint(0, len(data) - 1)
 
-            output = model.extract_branch(torch.stack(branches[0:4]), controls)
+            means = torch.stack([b[0] for b in branches[0:4]])
+
+            output = model.extract_branch(means, controls)
             error = torch.abs(output - dataset.extract_targets(data).cuda())
+
+            # log error on tensorboard
+            coil_logger.add_scalar('l1_error_steer', torch.mean(error[:,0]).item(), iteration)
+            coil_logger.add_scalar('l1_error_gas', torch.mean(error[:,1]).item(), iteration)
+            coil_logger.add_scalar('l1_error_break', torch.mean(error[:,2]).item(), iteration)
 
             accumulated_time += time.time() - capture_time
 
