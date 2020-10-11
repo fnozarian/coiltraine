@@ -7,6 +7,8 @@ import torch
 
 
 from drive import CoILAgent
+from drive import CoILEnsembleAgent
+
 from configs import g_conf, merge_with_yaml, set_type_of_process
 
 
@@ -71,10 +73,19 @@ if __name__ == '__main__':
     args = argparser.parse_args()
     args.width, args.height = [int(x) for x in args.res.split('x')]
     merge_with_yaml(os.path.join('configs', args.folder, args.exp + '.yaml'))
-    checkpoint = torch.load(os.path.join('_logs', args.folder, args.exp
-                                         , 'checkpoints', str(args.checkpoint) + '.pth'))
+    # checkpoint = torch.load(os.path.join('_logs', args.folder, args.exp
+    #                                      , 'checkpoints', str(args.checkpoint) + '.pth'))
 
-    agent = CoILAgent(checkpoint, '_', args.carla_version)
+    checkpoints_path = os.path.join('_logs', args.folder, args.exp, 'checkpoints/*')
+    print(checkpoints_path)
+    checkpoints = []
+    for ckpt_pth in glob.glob(checkpoints_path):
+        checkpoint = torch.load(ckpt_pth)
+        checkpoints.append(checkpoint)
+
+    agent = CoILEnsembleAgent(checkpoints, 'Town01')
+
+    # agent = CoILAgent(checkpoint, '_', args.carla_version)
     # Decide the version
     if args.carla_version == '0.9':
 

@@ -18,6 +18,7 @@ from coilutils.checkpoint_schedule import get_latest_evaluated_checkpoint, is_ne
     maximun_checkpoint_reach, get_next_checkpoint
 
 import numpy as np
+import glob
 
 def write_waypoints_output(iteration, output):
 
@@ -88,164 +89,122 @@ def execute(gpu, exp_batch, exp_alias, dataset_name, suppress_output):
                                                   num_workers=g_conf.NUMBER_OF_LOADING_WORKERS,
                                                   pin_memory=True)
 
-        model = CoILModel(g_conf.MODEL_TYPE, g_conf.MODEL_CONFIGURATION)
-        # The window used to keep track of the trainings
-        l1_window = []
-        latest = get_latest_evaluated_checkpoint()
-        if latest is not None:  # When latest is noe
-            l1_window = coil_logger.recover_loss_window(dataset_name, None)
+        checkpoints_path = os.path.join('_logs', exp_batch, exp_alias, 'checkpoints/*')
+        checkpoints = []
+        models = []
+        checkpoint_iterations = []
+        for i, ckpt_pth in enumerate(glob.glob(checkpoints_path)):
+            checkpoint = torch.load(ckpt_pth)
+            checkpoints.append(checkpoint)
+            checkpoint_iterations.append(checkpoint['iteration'])
+            print("loading model {iter}/{total}".format(iter=i, total=len(models)))
+            model = CoILModel(g_conf.MODEL_TYPE, g_conf.MODEL_CONFIGURATION)
+            model.load_state_dict(checkpoint['state_dict'])
+            model.cuda()
+            model.eval()
+            models.append(model)
 
-        model.cuda()
+        n_models_float = float(len(models))
 
-        best_mse = 1000
-        best_error = 1000
-        best_mse_iter = 0
-        best_error_iter = 0
 
-        while not maximun_checkpoint_reach(latest, g_conf.TEST_SCHEDULE):
+        accumulated_mse = 0
+        accumulated_error = 0
+        iteration_on_checkpoint = 0
+        all_info = dict()
 
-            if is_next_checkpoint_ready(g_conf.TEST_SCHEDULE):
+        for data in data_loader:
 
-                latest = get_next_checkpoint(g_conf.TEST_SCHEDULE)
+            # Compute the forward pass on a batch from  the validation dataset
+            controls = data['directions']
 
-                checkpoint = torch.load(os.path.join('_logs', exp_batch, exp_alias
-                                        , 'checkpoints', str(latest) + '.pth'))
-                checkpoint_iteration = checkpoint['iteration']
-                print("Validation loaded ", checkpoint_iteration)
+            means = []
+            sigma2_aleas = []
+            for model in models:
+                mean, log_var = model.forward_branch(torch.squeeze(data['rgb']).cuda(),
+                                          dataset.extract_inputs(data).cuda(),
+                                          controls)
+                means.append(mean)
+                sigma2_aleas.append(torch.exp(log_var))
 
-                model.load_state_dict(checkpoint['state_dict'])
+            mean = torch.zeros(means[0].size()).cuda()  # shape: [batch_size, 3]
+            for value in means:
+                mean = mean + value / n_models_float
 
-                model.eval()
-                accumulated_mse = 0
-                accumulated_error = 0
-                iteration_on_checkpoint = 0
+            sigma2_alea = torch.zeros(means[0].size()).cuda()  # shape: [batch_size, 3]
+            for value in sigma2_aleas:
+                sigma2_alea = sigma2_alea + value / n_models_float
 
-                all_info = dict()
+            sigma2_epi = torch.zeros(means[0].size()).cuda()  # shape: [batch_size, 3]
+            for value in means:
+                sigma2_epi = sigma2_epi + torch.pow(mean - value, 2) / n_models_float
 
-                for data in data_loader:
-
-                    # Compute the forward pass on a batch from  the validation dataset
-                    controls = data['directions']
-                    means, log_vars = model.forward_branch(torch.squeeze(data['rgb']).cuda(),
-                                                  dataset.extract_inputs(data).cuda(),
-                                                  controls)
-                    sigma2_alea = torch.exp(log_vars)
-
-                    # It could be either waypoints or direct control
-                    if 'waypoint1_angle' in g_conf.TARGETS:
-                        write_waypoints_output(checkpoint_iteration, means)
-                    else:
-                        write_regular_output(checkpoint_iteration, means)
-
-                    mse = torch.mean((means -
-                                      dataset.extract_targets(data).cuda()) ** 2).data.tolist()
-                    mean_error = torch.mean(
-                        torch.abs(means -
-                                  dataset.extract_targets(data).cuda())).data.tolist()
-
-                    accumulated_error += mean_error
-                    accumulated_mse += mse
-                    error = torch.abs(means - dataset.extract_targets(data).cuda())
-
-                    all_info_means = means.detach().cpu().numpy()
-                    all_info_sigma2_alea = sigma2_alea.detach().cpu().numpy()
-                    all_info_speeds = dataset.extract_inputs(data).detach().cpu().numpy()
-                    all_info_targets = dataset.extract_targets(data).detach().cpu().numpy()
-                    all_info_controls = controls.detach().cpu().numpy()
-
-                    if iteration_on_checkpoint == 0:
-                        all_info['means'] = all_info_means
-                        all_info['sigma2_alea'] = all_info_sigma2_alea
-                        all_info['speeds'] = all_info_speeds
-                        all_info['targets'] = all_info_targets
-                        all_info['controls'] = all_info_controls
-                        all_info['img_paths'] = data['img_path']
-                    else:
-                        all_info['means'] = np.concatenate([all_info['means'], all_info_means], axis=0)
-                        all_info['sigma2_alea'] = np.concatenate([all_info['sigma2_alea'], all_info_sigma2_alea], axis=0)
-                        all_info['speeds'] = np.concatenate([all_info['speeds'], all_info_speeds], axis=0)
-                        all_info['targets'] = np.concatenate([all_info['targets'], all_info_targets], axis=0)
-                        all_info['controls'] = np.concatenate([all_info['controls'], all_info_controls], axis=0)
-                        all_info['img_paths'] = np.concatenate([all_info['img_paths'], data['img_path']], axis=0)
-
-                    # Log a random position
-                    position = random.randint(0, len(means.data.tolist()) - 1)
-
-                    coil_logger.add_message('Iterating',
-                                            {'Checkpoint': latest,
-                                             'Iteration': (
-                                                         str(iteration_on_checkpoint * 120) + '/' + str(len(dataset))),
-                                             'MeanError': mean_error,
-                                             'MSE': mse,
-                                             'Output': means[position].data.tolist(),
-                                             'GroundTruth': dataset.extract_targets(data)[position].data.tolist(),
-                                             'Error': error[position].data.tolist(),
-                                             'Inputs': dataset.extract_inputs(data)[position].data.tolist()},
-                                            latest)
-                    iteration_on_checkpoint += 1
-                    print("Iteration %d  on Checkpoint %d : Error %f" % (iteration_on_checkpoint,
-                                                                         checkpoint_iteration, mean_error))
-
-                """
-                    ########
-                    Finish a round of validation, write results, wait for the next
-                    ########
-                """
-                print("writing all info to file..")
-                np.save('all_info_chpt' + str(latest), all_info)
-
-                checkpoint_average_mse = accumulated_mse/(len(data_loader))
-                checkpoint_average_error = accumulated_error/(len(data_loader))
-                print('checkpoint_average_mse: ', checkpoint_average_mse)
-                print('checkpoint_average_error: ', checkpoint_average_error)
-                coil_logger.add_scalar('Loss', checkpoint_average_mse, latest, True)
-                coil_logger.add_scalar('Error', checkpoint_average_error, latest, True)
-
-                mae_errors = np.mean(np.abs(all_info['means'] - all_info['targets']), axis=0)
-                print('MAE Steering Angle for Ensemble Model: ', mae_errors[0])
-                print('MAE Throttle for Ensemble Model: ', mae_errors[1])
-                print('MAE Break for Ensemble Model: ', mae_errors[2])
-                print('MAE Total: ', np.mean(mae_errors))
-
-                if checkpoint_average_mse < best_mse:
-                    best_mse = checkpoint_average_mse
-                    best_mse_iter = latest
-
-                if checkpoint_average_error < best_error:
-                    best_error = checkpoint_average_error
-                    best_error_iter = latest
-
-                coil_logger.add_message('Iterating',
-                     {'Summary':
-                         {
-                          'Error': checkpoint_average_error,
-                          'Loss': checkpoint_average_mse,
-                          'BestError': best_error,
-                          'BestMSE': best_mse,
-                          'BestMSECheckpoint': best_mse_iter,
-                          'BestErrorCheckpoint': best_error_iter
-                         },
-
-                      'Checkpoint': latest},
-                                        latest)
-
-                l1_window.append(checkpoint_average_error)
-                coil_logger.write_on_error_csv(dataset_name, checkpoint_average_error)
-
-                # If we are using the finish when validation stops, we check the current
-                if g_conf.FINISH_ON_VALIDATION_STALE is not None:
-                    if dlib.count_steps_without_decrease(l1_window) > 3 and \
-                            dlib.count_steps_without_decrease_robust(l1_window) > 3:
-                        coil_logger.write_stop(dataset_name, latest)
-                        break
-
+            # It could be either waypoints or direct control
+            if 'waypoint1_angle' in g_conf.TARGETS:
+                write_waypoints_output(checkpoint_iterations, mean)
             else:
+                write_regular_output(checkpoint_iterations, mean)
 
-                latest = get_latest_evaluated_checkpoint()
-                time.sleep(1)
+            mse = torch.mean((mean -
+                              dataset.extract_targets(data).cuda()) ** 2).data.tolist()
+            mean_error = torch.mean(
+                torch.abs(mean -
+                          dataset.extract_targets(data).cuda())).data.tolist()
 
-                coil_logger.add_message('Loading', {'Message': 'Waiting Checkpoint'})
-                print("Waiting for the next Validation")
+            accumulated_error += mean_error
+            accumulated_mse += mse
+            # error = torch.abs(mean - dataset.extract_targets(data).cuda())
+
+            all_info_mean = mean.detach().cpu().numpy()
+            all_info_sigma2_alea = sigma2_alea.detach().cpu().numpy()
+            all_info_sigma2_epi = sigma2_epi.detach().cpu().numpy()
+            # all_info_log_vars = log_vars.detach().cpu().numpy()
+            all_info_speeds = dataset.extract_inputs(data).detach().cpu().numpy()
+            all_info_targets = dataset.extract_targets(data).detach().cpu().numpy()
+            all_info_controls = controls.detach().cpu().numpy()
+
+            if iteration_on_checkpoint == 0:
+                all_info['means'] = all_info_mean
+                all_info['sigma2_alea'] = all_info_sigma2_alea
+                all_info['sigma2_epi'] = all_info_sigma2_epi
+                # all_info['log_vars'] = all_info_log_vars
+                all_info['speeds'] = all_info_speeds
+                all_info['targets'] = all_info_targets
+                all_info['controls'] = all_info_controls
+                all_info['img_paths'] = data['img_path']
+            else:
+                all_info['means'] = np.concatenate([all_info['means'], all_info_mean], axis=0)
+                all_info['sigma2_alea'] = np.concatenate([all_info['sigma2_alea'], all_info_sigma2_alea], axis=0)
+                all_info['sigma2_epi'] = np.concatenate([all_info['sigma2_epi'], all_info_sigma2_epi], axis=0)
+                # all_info['log_vars'] = np.concatenate([all_info['log_vars'], all_info_log_vars], axis=0)
+                all_info['speeds'] = np.concatenate([all_info['speeds'], all_info_speeds], axis=0)
+                all_info['targets'] = np.concatenate([all_info['targets'], all_info_targets], axis=0)
+                all_info['controls'] = np.concatenate([all_info['controls'], all_info_controls], axis=0)
+                all_info['img_paths'] = np.concatenate([all_info['img_paths'], data['img_path']], axis=0)
+
+            iteration_on_checkpoint += 1
+            print("Iteration %d  on Checkpoints %s : Error %f" % (iteration_on_checkpoint,
+                                                                 str(checkpoint_iterations), mean_error))
+
+        """
+            ########
+            Finish a round of validation, write results, wait for the next
+            ########
+        """
+        checkpoint_average_mse = accumulated_mse / (len(data_loader))
+        checkpoint_average_error = accumulated_error / (len(data_loader))
+        print('checkpoint_average_mse: ', checkpoint_average_mse)
+        print('checkpoint_average_error: ', checkpoint_average_error)
+
+
+        mae_errors = np.mean(np.abs(all_info['means'] - all_info['targets']), axis=0)
+        print('MAE Steering Angle for Ensemble Model: ', mae_errors[0])
+        print('MAE Throttle for Ensemble Model: ', mae_errors[1])
+        print('MAE Break for Ensemble Model: ', mae_errors[2])
+        print('MAE Total: ', np.mean(mae_errors))
+
+        filename = 'all_info_chpt_' + '_'.join(str(ch) for ch in checkpoint_iterations)
+        print("writing all info to file {}".format(filename))
+        np.save(filename, all_info)
 
         coil_logger.add_message('Finished', {})
 

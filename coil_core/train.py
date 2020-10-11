@@ -144,8 +144,7 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
             """
 
             iteration += 1
-            # keep the lr constant during variance learning
-            if (iteration % 1000 == 0) and mean_training:
+            if iteration % 1000 == 0:
                 adjust_learning_rate_auto(optimizer, loss_window)
 
             # get the control commands from float_data, size = [120,1]
@@ -178,10 +177,6 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
                     for name, param in model.named_parameters():
                         if param.requires_grad == True:
                             print(name)
-
-                    for param_group in optimizer.param_groups:
-                        print("Variance learning phase: New learning rate is ", 0.0001)
-                        param_group['lr'] = 0.0001
 
                 loss, _ = criterion_gaussian(loss_function_params)
             else:
@@ -234,9 +229,6 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
             coil_logger.add_scalar('l1_error_steer', torch.mean(error[:,0]).item(), iteration)
             coil_logger.add_scalar('l1_error_gas', torch.mean(error[:,1]).item(), iteration)
             coil_logger.add_scalar('l1_error_break', torch.mean(error[:,2]).item(), iteration)
-            lrs = [param_group['lr'] for param_group in optimizer.param_groups]
-            coil_logger.add_scalar('lr', lrs[0], iteration)
-
 
             accumulated_time += time.time() - capture_time
 
