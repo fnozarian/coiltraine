@@ -28,38 +28,43 @@ class Gaussian_FC(nn.Module):
         if len(params['dropouts']) != len(params['neurons'])-1:
             raise ValueError("Dropouts should be from the len of kernels minus 1")
 
+        self.log_vars = []
+        self.means = []
 
-        self.shared_layers = []
 
-        for i in range(0, len(params['neurons']) -2):
+        for i in range(0, len(params['neurons']) -1):
 
-            fc = nn.Linear(params['neurons'][i], params['neurons'][i+1])
-            dropout = nn.Dropout2d(p=params['dropouts'][i])
-            relu = nn.ReLU(inplace=True)
+            fc_means = nn.Linear(params['neurons'][i], params['neurons'][i+1])
+            dropout_means = nn.Dropout2d(p=params['dropouts'][i])
+            relu_means = nn.ReLU(inplace=True)
 
-            self.shared_layers.append(nn.Sequential(*[fc, dropout, relu]))
+            fc_log_vars = nn.Linear(params['neurons'][i], params['neurons'][i + 1])
+            dropout_log_vars = nn.Dropout2d(p=params['dropouts'][i])
+            relu_log_vars = nn.ReLU(inplace=True)
 
-        self.shared_layers = nn.Sequential(*self.shared_layers)
+            if i == len(params['neurons'])-2 and params['end_layer']:
+                self.means.append(nn.Sequential(*[fc_means, dropout_means]))
+                self.log_vars.append(nn.Sequential(*[fc_log_vars, dropout_log_vars]))
+            else:
+                self.means.append(nn.Sequential(*[fc_means, dropout_means, relu_means]))
+                self.log_vars.append(nn.Sequential(*[fc_log_vars, dropout_log_vars, relu_log_vars]))
 
-        ll_in_ix = len(params['neurons']) - 2
-        ll_in = params['neurons'][ll_in_ix]
-        ll_out = params['neurons'][ll_in_ix + 1]
 
-        self.means = nn.Linear(ll_in, ll_out)
-        self.log_vars = nn.Linear(ll_in, ll_out)
+        self.log_vars = nn.Sequential(*self.log_vars)
+        self.means = nn.Sequential(*self.means)
+
 
     def forward(self, x):
         # if X is a tuple, just return the other elements, the idea is to re pass
         # the intermediate layers for future attention plotting
         if type(x) is tuple:
-            raise NotImplementedError()
+            return self.layers(x[0]), x[1]
         else:
-
-            shared_feats = self.shared_layers(x)
-            means = self.means(shared_feats)
-            log_vars = self.log_vars(shared_feats)
+            means = self.means(x)
+            log_vars = self.log_vars(x)
 
             return means, log_vars
+
 
 class FC(nn.Module):
 
@@ -110,5 +115,3 @@ class FC(nn.Module):
             return self.layers(x[0]), x[1]
         else:
             return self.layers(x)
-
-

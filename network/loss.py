@@ -71,12 +71,13 @@ def Loss(loss_name):
 
     if loss_name == 'L1':
 
-        return l1_gaussian
+        return l1
 
     elif loss_name == 'L2':
 
         return l2
-
+    elif loss_name == 'l1_gaussian':
+        return l1_gaussian
     else:
         raise ValueError(" Not found Loss name")
 

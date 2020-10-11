@@ -129,6 +129,8 @@ def execute(gpu, exp_batch, exp_alias, dataset_name, suppress_output):
                     means, log_vars = model.forward_branch(torch.squeeze(data['rgb']).cuda(),
                                                   dataset.extract_inputs(data).cuda(),
                                                   controls)
+                    sigma2_alea = torch.exp(log_vars)
+
                     # It could be either waypoints or direct control
                     if 'waypoint1_angle' in g_conf.TARGETS:
                         write_waypoints_output(checkpoint_iteration, means)
@@ -146,23 +148,25 @@ def execute(gpu, exp_batch, exp_alias, dataset_name, suppress_output):
                     error = torch.abs(means - dataset.extract_targets(data).cuda())
 
                     all_info_means = means.detach().cpu().numpy()
-                    all_info_log_vars = log_vars.detach().cpu().numpy()
+                    all_info_sigma2_alea = sigma2_alea.detach().cpu().numpy()
                     all_info_speeds = dataset.extract_inputs(data).detach().cpu().numpy()
                     all_info_targets = dataset.extract_targets(data).detach().cpu().numpy()
                     all_info_controls = controls.detach().cpu().numpy()
 
                     if iteration_on_checkpoint == 0:
                         all_info['means'] = all_info_means
-                        all_info['log_vars'] = all_info_log_vars
+                        all_info['sigma2_alea'] = all_info_sigma2_alea
                         all_info['speeds'] = all_info_speeds
                         all_info['targets'] = all_info_targets
                         all_info['controls'] = all_info_controls
+                        all_info['img_paths'] = data['img_path']
                     else:
                         all_info['means'] = np.concatenate([all_info['means'], all_info_means], axis=0)
-                        all_info['log_vars'] = np.concatenate([all_info['log_vars'], all_info_log_vars], axis=0)
+                        all_info['sigma2_alea'] = np.concatenate([all_info['sigma2_alea'], all_info_sigma2_alea], axis=0)
                         all_info['speeds'] = np.concatenate([all_info['speeds'], all_info_speeds], axis=0)
                         all_info['targets'] = np.concatenate([all_info['targets'], all_info_targets], axis=0)
                         all_info['controls'] = np.concatenate([all_info['controls'], all_info_controls], axis=0)
+                        all_info['img_paths'] = np.concatenate([all_info['img_paths'], data['img_path']], axis=0)
 
                     # Log a random position
                     position = random.randint(0, len(means.data.tolist()) - 1)
@@ -192,8 +196,16 @@ def execute(gpu, exp_batch, exp_alias, dataset_name, suppress_output):
 
                 checkpoint_average_mse = accumulated_mse/(len(data_loader))
                 checkpoint_average_error = accumulated_error/(len(data_loader))
+                print('checkpoint_average_mse: ', checkpoint_average_mse)
+                print('checkpoint_average_error: ', checkpoint_average_error)
                 coil_logger.add_scalar('Loss', checkpoint_average_mse, latest, True)
                 coil_logger.add_scalar('Error', checkpoint_average_error, latest, True)
+
+                mae_errors = np.mean(np.abs(all_info['means'] - all_info['targets']), axis=0)
+                print('MAE Steering Angle for Ensemble Model: ', mae_errors[0])
+                print('MAE Throttle for Ensemble Model: ', mae_errors[1])
+                print('MAE Break for Ensemble Model: ', mae_errors[2])
+                print('MAE Total: ', np.mean(mae_errors))
 
                 if checkpoint_average_mse < best_mse:
                     best_mse = checkpoint_average_mse

@@ -76,7 +76,7 @@ class CoILAgent(object):
         model_outputs = self._model.forward_branch(self._process_sensors(sensor_data), norm_speed,
                                                   directions_tensor)
 
-        steer, throttle, brake = self._process_model_outputs(model_outputs[0])
+        steer, throttle, brake = self._process_model_outputs(model_outputs[0][0])
         if self._carla_version == '0.9':
             import carla
             control = carla.VehicleControl()

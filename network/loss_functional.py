@@ -140,7 +140,11 @@ def l1_loss(params):
     loss_branches_vec = []
     # TODO This is hardcoded but all our cases rigth now uses four branches
     for i in range(len(params['branches']) -1):
-        loss_branches_vec.append(torch.abs((params['branches'][i] - params['targets'])
+
+        means, log_var = params['branches'][i]
+        targets = params['targets']
+
+        loss_branches_vec.append(torch.abs((means - targets)
                                            * params['controls_mask'][i])
                                  * params['branch_weights'][i])
     """ The last branch is a speed branch"""

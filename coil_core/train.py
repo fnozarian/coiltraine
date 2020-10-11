@@ -76,10 +76,12 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
             iteration = checkpoint['iteration']
             best_loss = checkpoint['best_loss']
             best_loss_iter = checkpoint['best_loss_iter']
+            mean_training = checkpoint['mean_training']
         else:
             iteration = 0
             best_loss = 10000.0
             best_loss_iter = 0
+            mean_training = True
 
 
         # Define the dataset. This structure is has the __get_item__ redefined in a way
@@ -100,6 +102,17 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
         data_loader = select_balancing_strategy(dataset, iteration, number_of_workers)
         model = CoILModel(g_conf.MODEL_TYPE, g_conf.MODEL_CONFIGURATION)
         model.cuda()
+
+        # freezing all layers of log_vars initially
+        for b in model.branches.branched_modules:
+            for param in b.log_vars.parameters():
+                param.requires_grad = False
+
+        print("Params to learn:")
+        for name, param in model.named_parameters():
+            if param.requires_grad == True:
+                print("\t", name)
+
         optimizer = optim.Adam(model.parameters(), lr=g_conf.LEARNING_RATE)
 
         if checkpoint_file is not None or g_conf.PRELOAD_MODEL_ALIAS is not None:
@@ -114,6 +127,7 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
         print ("Before the loss")
 
         criterion = Loss(g_conf.LOSS_FUNCTION)
+        criterion_gaussian = Loss('l1_gaussian')
 
         # Loss time series window
         for data in data_loader:
@@ -130,7 +144,8 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
             """
 
             iteration += 1
-            if iteration % 1000 == 0:
+            # keep the lr constant during variance learning
+            if (iteration % 1000 == 0) and mean_training:
                 adjust_learning_rate_auto(optimizer, loss_window)
 
             # get the control commands from float_data, size = [120,1]
@@ -149,7 +164,29 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
                 'branch_weights': g_conf.BRANCH_LOSS_WEIGHT,
                 'variable_weights': g_conf.VARIABLE_WEIGHT
             }
-            loss, _ = criterion(loss_function_params)
+
+            if iteration > 400001:
+                if mean_training:
+                    print("training log_vars started")
+                    mean_training = False
+                    for name, param in model.named_parameters():
+                        if param.requires_grad == True:
+                            param.requires_grad = False
+                        else:
+                            param.requires_grad = True
+
+                    for name, param in model.named_parameters():
+                        if param.requires_grad == True:
+                            print(name)
+
+                    for param_group in optimizer.param_groups:
+                        print("Variance learning phase: New learning rate is ", 0.0001)
+                        param_group['lr'] = 0.0001
+
+                loss, _ = criterion_gaussian(loss_function_params)
+            else:
+                loss, _ = criterion(loss_function_params)
+
             loss.backward()
             optimizer.step()
             """
@@ -166,7 +203,8 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
                     'best_loss': best_loss,
                     'total_time': accumulated_time,
                     'optimizer': optimizer.state_dict(),
-                    'best_loss_iter': best_loss_iter
+                    'best_loss_iter': best_loss_iter,
+                    'mean_training': mean_training
                 }
                 torch.save(state, os.path.join('_logs', exp_batch, exp_alias
                                                , 'checkpoints', str(iteration) + '.pth'))
@@ -196,6 +234,9 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
             coil_logger.add_scalar('l1_error_steer', torch.mean(error[:,0]).item(), iteration)
             coil_logger.add_scalar('l1_error_gas', torch.mean(error[:,1]).item(), iteration)
             coil_logger.add_scalar('l1_error_break', torch.mean(error[:,2]).item(), iteration)
+            lrs = [param_group['lr'] for param_group in optimizer.param_groups]
+            coil_logger.add_scalar('lr', lrs[0], iteration)
+
 
             accumulated_time += time.time() - capture_time
 
