@@ -174,14 +174,18 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
                             param.requires_grad = False
                         else:
                             param.requires_grad = True
+                    # fine-tune all layers of means with the log_vars
+                    for b in model.branches.branched_modules:
+                        for param in b.means.parameters():
+                            param.requires_grad = True
 
                     for name, param in model.named_parameters():
                         if param.requires_grad == True:
                             print(name)
 
                     for param_group in optimizer.param_groups:
-                        print("Variance learning phase: New learning rate is ", 0.0001)
-                        param_group['lr'] = 0.0001
+                        print("Variance learning phase: New learning rate is ", 0.00001)
+                        param_group['lr'] = 0.00001
 
                 loss, _ = criterion_gaussian(loss_function_params)
             else:
@@ -236,7 +240,6 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
             coil_logger.add_scalar('l1_error_break', torch.mean(error[:,2]).item(), iteration)
             lrs = [param_group['lr'] for param_group in optimizer.param_groups]
             coil_logger.add_scalar('lr', lrs[0], iteration)
-
 
             accumulated_time += time.time() - capture_time
 

@@ -160,7 +160,7 @@ def l1_gaussian_loss(params):
 
         means, log_var = params['branches'][i]
         targets = params['targets']
-        gaussian_loss = torch.exp(-log_var) * torch.abs(means - targets) + log_var
+        gaussian_loss = torch.exp(-log_var) * torch.pow(means - targets, 2) + log_var
         branch_loss = gaussian_loss * params['controls_mask'][i] * params['branch_weights'][i]
         loss_branches_vec.append(branch_loss)
 
