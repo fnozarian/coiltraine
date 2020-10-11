@@ -187,9 +187,7 @@ def execute(gpu, exp_batch, exp_alias, suppress_output=True, number_of_workers=1
             # Log a random position
             position = random.randint(0, len(data) - 1)
 
-            means = torch.stack([b[0] for b in branches[0:4]])
-
-            output = model.extract_branch(means, controls)
+            output = model.extract_branch(torch.stack(branches[0:4]), controls)
             error = torch.abs(output - dataset.extract_targets(data).cuda())
 
             # log error on tensorboard

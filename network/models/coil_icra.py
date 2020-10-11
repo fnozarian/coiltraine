@@ -8,7 +8,7 @@ from coilutils.general import command_number_to_index
 
 from .building_blocks import Conv
 from .building_blocks import Branching
-from .building_blocks import FC, Gaussian_FC
+from .building_blocks import FC, MCDropoutFC
 from .building_blocks import Join
 
 class CoILICRA(nn.Module):
@@ -84,7 +84,7 @@ class CoILICRA(nn.Module):
         # Create the fc vector separatedely
         branch_fc_vector = []
         for i in range(params['branches']['number_of_branches']):
-            branch_fc_vector.append(Gaussian_FC(params={'neurons': [params['join']['fc']['neurons'][-1]] +
+            branch_fc_vector.append(MCDropoutFC(params={'neurons': [params['join']['fc']['neurons'][-1]] +
                                                          params['branches']['fc']['neurons'] +
                                                          [len(g_conf.TARGETS)],
                                                'dropouts': params['branches']['fc']['dropouts'] + [0.0],
@@ -137,13 +137,9 @@ class CoILICRA(nn.Module):
         """
         # Convert to integer just in case .
         # TODO: take four branches, this is hardcoded
+        output_vec = torch.stack(self.forward(x, a)[0:4])
 
-        branches = self.forward(x, a)[0:4]
-
-        means = torch.stack([b[0] for b in branches[0:4]])
-        log_vars = torch.stack([b[1] for b in branches[0:4]])
-
-        return self.extract_branch(means, branch_number), self.extract_branch(log_vars, branch_number)
+        return self.extract_branch(output_vec, branch_number)
 
     def get_perception_layers(self, x):
         return self.perception.get_layers_features(x)

@@ -26,6 +26,8 @@ from coilutils.general import compute_average_std_separatetasks, get_latest_path
 from plotter.plot_on_map import plot_episodes_tracks
 
 
+from drive import CoILMCDropoutAgent
+
 def find_free_port():
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(('', 0))
@@ -47,24 +49,25 @@ def start_carla_simulator(gpu, town_name, docker):
 
     port = find_free_port()
 
+    sp = subprocess.Popen(['docker', 'run', '--rm', '-d', '-p',
+                           str(port)+'-'+str(port+2)+':'+str(port)+'-'+str(port+2),
+                           '--runtime=nvidia', '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
+                           '/bin/bash', 'CarlaUE4.sh', '/Game/Maps/' + town_name, '-windowed',
+                           '-benchmark', '-fps=10', '-world-port=' + str(port)], shell=False,
+                           stdout=subprocess.PIPE)
+
     # sp = subprocess.Popen(['docker', 'run', '--rm', '-d', '-p',
     #                        str(port)+'-'+str(port+2)+':'+str(port)+'-'+str(port+2),
-    #                        '--runtime=nvidia', '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
+    #                        '--gpus', gpu, '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
     #                        '/bin/bash', 'CarlaUE4.sh', '/Game/Maps/' + town_name, '-windowed',
     #                        '-benchmark', '-fps=10', '-world-port=' + str(port)], shell=False,
     #                        stdout=subprocess.PIPE)
 
-    sp = subprocess.Popen(['docker', 'run', '--rm', '-d', '-p',
-                           str(port)+'-'+str(port+2)+':'+str(port)+'-'+str(port+2),
-                           '--gpus', gpu, '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
-                           '/bin/bash', 'CarlaUE4.sh', '/Game/Maps/' + town_name, '-windowed',
-                           '-benchmark', '-fps=10', '-world-port=' + str(port)], shell=False,
-                           stdout=subprocess.PIPE)
-    print('docker', 'run', '--rm', '--gpus', gpu, '-d', '-p',
-                           str(port)+'-'+str(port+2)+':'+str(port)+'-'+str(port+2),
-                           '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
-                           '/bin/bash', 'CarlaUE4.sh', '/Game/Maps/' + town_name, '-windowed',
-                           '-benchmark', '-fps=10', '-world-port=' + str(port))
+    # print('docker', 'run', '--rm', '--gpus', gpu, '-d', '-p',
+    #                        str(port)+'-'+str(port+2)+':'+str(port)+'-'+str(port+2),
+    #                        '-e', 'NVIDIA_VISIBLE_DEVICES='+str(gpu), docker,
+    #                        '/bin/bash', 'CarlaUE4.sh', '/Game/Maps/' + town_name, '-windowed',
+    #                        '-benchmark', '-fps=10', '-world-port=' + str(port))
     (out, err) = sp.communicate()
 
     print("Going to communicate")
@@ -103,7 +106,7 @@ def driving_benchmark(checkpoint_number, gpu, town_name, experiment_set, exp_bat
         checkpoint = torch.load(os.path.join('_logs', exp_batch, exp_alias
                                              , 'checkpoints', str(checkpoint_number) + '.pth'))
 
-        coil_agent = CoILAgent(checkpoint, town_name)
+        coil_agent = CoILMCDropoutAgent(checkpoint, town_name)
         print ("Checkpoint ", checkpoint_number)
         coil_logger.add_message('Iterating', {"Checkpoint": checkpoint_number}, checkpoint_number)
 

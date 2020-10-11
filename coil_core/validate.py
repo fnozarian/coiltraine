@@ -42,6 +42,7 @@ def write_regular_output(iteration, output):
 
 
 
+NUM_SAMPLES = 5
 
 # The main function maybe we could call it with a default name
 def execute(gpu, exp_batch, exp_alias, dataset_name, suppress_output):
@@ -126,74 +127,93 @@ def execute(gpu, exp_batch, exp_alias, dataset_name, suppress_output):
 
                     # Compute the forward pass on a batch from  the validation dataset
                     controls = data['directions']
-                    means, log_vars = model.forward_branch(torch.squeeze(data['rgb']).cuda(),
-                                                  dataset.extract_inputs(data).cuda(),
-                                                  controls)
+                    samples = []
+                    for i in range(NUM_SAMPLES):
+                        output = model.forward_branch(torch.squeeze(data['rgb']).cuda(),
+                                                      dataset.extract_inputs(data).cuda(),
+                                                      controls)
+                        samples.append(output)
+
+                    samples = torch.stack(samples)
+                    mean = torch.mean(samples, dim=0)
+                    sigma2_epi = torch.var(samples, dim=0, unbiased=False)
+
                     # It could be either waypoints or direct control
                     if 'waypoint1_angle' in g_conf.TARGETS:
-                        write_waypoints_output(checkpoint_iteration, means)
+                        write_waypoints_output(checkpoint_iteration, output)
                     else:
-                        write_regular_output(checkpoint_iteration, means)
+                        write_regular_output(checkpoint_iteration, output)
 
-                    mse = torch.mean((means -
-                                      dataset.extract_targets(data).cuda()) ** 2).data.tolist()
+                    mse = torch.mean((output -
+                                      dataset.extract_targets(data).cuda())**2).data.tolist()
                     mean_error = torch.mean(
-                        torch.abs(means -
-                                  dataset.extract_targets(data).cuda())).data.tolist()
+                                    torch.abs(output -
+                                              dataset.extract_targets(data).cuda())).data.tolist()
 
                     accumulated_error += mean_error
                     accumulated_mse += mse
-                    error = torch.abs(means - dataset.extract_targets(data).cuda())
+                    error = torch.abs(output - dataset.extract_targets(data).cuda())
 
-                    all_info_means = means.detach().cpu().numpy()
-                    all_info_log_vars = log_vars.detach().cpu().numpy()
+                    all_info_mean = mean.detach().cpu().numpy()
+                    all_info_sigma2_epi = sigma2_epi.detach().cpu().numpy()
                     all_info_speeds = dataset.extract_inputs(data).detach().cpu().numpy()
                     all_info_targets = dataset.extract_targets(data).detach().cpu().numpy()
                     all_info_controls = controls.detach().cpu().numpy()
 
                     if iteration_on_checkpoint == 0:
-                        all_info['means'] = all_info_means
-                        all_info['log_vars'] = all_info_log_vars
+                        all_info['means'] = all_info_mean
+                        all_info['sigma2_epi'] = all_info_sigma2_epi
                         all_info['speeds'] = all_info_speeds
                         all_info['targets'] = all_info_targets
                         all_info['controls'] = all_info_controls
+                        all_info['img_paths'] = data['img_path']
                     else:
-                        all_info['means'] = np.concatenate([all_info['means'], all_info_means], axis=0)
-                        all_info['log_vars'] = np.concatenate([all_info['log_vars'], all_info_log_vars], axis=0)
+                        all_info['means'] = np.concatenate([all_info['means'], all_info_mean], axis=0)
+                        all_info['sigma2_epi'] = np.concatenate([all_info['sigma2_epi'], all_info_sigma2_epi], axis=0)
                         all_info['speeds'] = np.concatenate([all_info['speeds'], all_info_speeds], axis=0)
                         all_info['targets'] = np.concatenate([all_info['targets'], all_info_targets], axis=0)
                         all_info['controls'] = np.concatenate([all_info['controls'], all_info_controls], axis=0)
+                        all_info['img_paths'] = np.concatenate([all_info['img_paths'], data['img_path']], axis=0)
+
 
                     # Log a random position
-                    position = random.randint(0, len(means.data.tolist()) - 1)
+                    position = random.randint(0, len(output.data.tolist())-1)
 
                     coil_logger.add_message('Iterating',
-                                            {'Checkpoint': latest,
-                                             'Iteration': (
-                                                         str(iteration_on_checkpoint * 120) + '/' + str(len(dataset))),
-                                             'MeanError': mean_error,
-                                             'MSE': mse,
-                                             'Output': means[position].data.tolist(),
-                                             'GroundTruth': dataset.extract_targets(data)[position].data.tolist(),
-                                             'Error': error[position].data.tolist(),
-                                             'Inputs': dataset.extract_inputs(data)[position].data.tolist()},
-                                            latest)
+                         {'Checkpoint': latest,
+                          'Iteration': (str(iteration_on_checkpoint*120)+'/'+str(len(dataset))),
+                          'MeanError': mean_error,
+                          'MSE': mse,
+                          'Output': output[position].data.tolist(),
+                          'GroundTruth': dataset.extract_targets(data)[position].data.tolist(),
+                          'Error': error[position].data.tolist(),
+                          'Inputs': dataset.extract_inputs(data)[position].data.tolist()},
+                          latest)
                     iteration_on_checkpoint += 1
                     print("Iteration %d  on Checkpoint %d : Error %f" % (iteration_on_checkpoint,
-                                                                         checkpoint_iteration, mean_error))
+                                                                checkpoint_iteration, mean_error))
 
                 """
                     ########
                     Finish a round of validation, write results, wait for the next
                     ########
                 """
-                print("writing all info to file..")
-                np.save('all_info_chpt' + str(latest), all_info)
 
                 checkpoint_average_mse = accumulated_mse/(len(data_loader))
                 checkpoint_average_error = accumulated_error/(len(data_loader))
                 coil_logger.add_scalar('Loss', checkpoint_average_mse, latest, True)
                 coil_logger.add_scalar('Error', checkpoint_average_error, latest, True)
+                print('checkpoint_average_mse: ', checkpoint_average_mse)
+                print('checkpoint_average_error: ', checkpoint_average_error)
+                mae_errors = np.mean(np.abs(all_info['means'] - all_info['targets']), axis=0)
+                print('MAE Steering Angle for Ensemble Model: ', mae_errors[0])
+                print('MAE Throttle for Ensemble Model: ', mae_errors[1])
+                print('MAE Break for Ensemble Model: ', mae_errors[2])
+                print('MAE Total: ', np.mean(mae_errors))
+
+                filename = 'all_info_chpt_' + str(latest)
+                print("writing all info to file {}".format(filename))
+                np.save(filename, all_info)
 
                 if checkpoint_average_mse < best_mse:
                     best_mse = checkpoint_average_mse

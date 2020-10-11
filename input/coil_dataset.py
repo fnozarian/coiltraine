@@ -22,7 +22,7 @@ from configs import g_conf
 
 from coilutils.general import sort_nicely
 
-
+from tqdm import tqdm
 
 def parse_remove_configuration(configuration):
     """
@@ -72,7 +72,7 @@ class CoILDataset(Dataset):
                 os.path.join('_preloads', self.preload_name + '.npy')):
             print(" Loading from NPY ")
             self.sensor_data_names, self.measurements = np.load(
-                os.path.join('_preloads', self.preload_name + '.npy'))
+                os.path.join('_preloads', self.preload_name + '.npy'), allow_pickle=True)
             print(self.sensor_data_names)
         else:
             self.sensor_data_names, self.measurements = self._pre_load_image_folders(root_dir)
@@ -120,6 +120,7 @@ class CoILDataset(Dataset):
                 measurements[k] = v.float()
 
             measurements['rgb'] = img
+            measurements['img_path'] = img_path
 
             self.batch_read_number += 1
         except AttributeError:
@@ -205,7 +206,7 @@ class CoILDataset(Dataset):
         number_of_hours_pre_loaded = 0
 
         # Now we do a check to try to find all the
-        for episode in episodes_list:
+        for episode in tqdm(episodes_list):
 
             print('Episode ', episode)
 

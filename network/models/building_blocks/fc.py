@@ -5,61 +5,46 @@ import torch.nn.init as init
 import torch
 import torch.nn.functional as F
 
+class AlwaysOnDropout(nn.Module):
 
-class Gaussian_FC(nn.Module):
+    def __init__(self, p=0.1, inplace=False):
+        super(AlwaysOnDropout, self).__init__()
+        if p < 0 or p > 1:
+            raise ValueError("dropout probability has to be between 0 and 1, "
+                             "but got {}".format(p))
+        self.p = p
+        self.inplace = inplace
+    def forward(self, input):
+        return F.dropout(input, self.p, True, self.inplace)
 
-    def __init__(self, params=None, module_name='Default'
-                 ):
-        # TODO: Make an auto naming function for this.
+class MCDropoutFC(nn.Module):
 
-        super(Gaussian_FC, self).__init__()
+    def __init__(self, params=None):
 
+        super(MCDropoutFC, self).__init__()
 
-        """" ---------------------- FC ----------------------- """
-        if params is None:
-            raise ValueError("Creating a NULL fully connected block")
-        if 'neurons' not in params:
-            raise ValueError(" Missing the kernel sizes parameter ")
-        if 'dropouts' not in params:
-            raise ValueError(" Missing the dropouts parameter ")
-        if 'end_layer' not in params:
-            raise ValueError(" Missing the end module parameter ")
+        self.layers = []
 
-        if len(params['dropouts']) != len(params['neurons'])-1:
-            raise ValueError("Dropouts should be from the len of kernels minus 1")
+        for i in range(0, len(params['neurons']) - 1):
 
-
-        self.shared_layers = []
-
-        for i in range(0, len(params['neurons']) -2):
-
-            fc = nn.Linear(params['neurons'][i], params['neurons'][i+1])
-            dropout = nn.Dropout2d(p=params['dropouts'][i])
+            fc = nn.Linear(params['neurons'][i], params['neurons'][i + 1])
+            dropout = AlwaysOnDropout(p=params['dropouts'][i])
             relu = nn.ReLU(inplace=True)
 
-            self.shared_layers.append(nn.Sequential(*[fc, dropout, relu]))
+            if i == len(params['neurons']) - 2 and params['end_layer']:
+                self.layers.append(nn.Sequential(*[fc, dropout]))
+            else:
+                self.layers.append(nn.Sequential(*[fc, dropout, relu]))
 
-        self.shared_layers = nn.Sequential(*self.shared_layers)
-
-        ll_in_ix = len(params['neurons']) - 2
-        ll_in = params['neurons'][ll_in_ix]
-        ll_out = params['neurons'][ll_in_ix + 1]
-
-        self.means = nn.Linear(ll_in, ll_out)
-        self.log_vars = nn.Linear(ll_in, ll_out)
+        self.layers = nn.Sequential(*self.layers)
 
     def forward(self, x):
         # if X is a tuple, just return the other elements, the idea is to re pass
         # the intermediate layers for future attention plotting
         if type(x) is tuple:
-            raise NotImplementedError()
+            return self.layers(x[0]), x[1]
         else:
-
-            shared_feats = self.shared_layers(x)
-            means = self.means(shared_feats)
-            log_vars = self.log_vars(shared_feats)
-
-            return means, log_vars
+            return self.layers(x)
 
 class FC(nn.Module):
 

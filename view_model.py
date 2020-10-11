@@ -7,6 +7,8 @@ import torch
 
 
 from drive import CoILAgent
+from drive import CoILMCDropoutAgent
+
 from configs import g_conf, merge_with_yaml, set_type_of_process
 
 
@@ -74,7 +76,7 @@ if __name__ == '__main__':
     checkpoint = torch.load(os.path.join('_logs', args.folder, args.exp
                                          , 'checkpoints', str(args.checkpoint) + '.pth'))
 
-    agent = CoILAgent(checkpoint, '_', args.carla_version)
+    agent = CoILMCDropoutAgent(checkpoint, '_', args.carla_version)
     # Decide the version
     if args.carla_version == '0.9':
 
